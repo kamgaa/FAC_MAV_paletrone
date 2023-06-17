@@ -179,18 +179,18 @@ static double xi = 0.01;//F_i=k*(omega_i)^2, M_i=b*(omega_i)^2
 static double pi = 3.141592;//(rad)
 static double g = 9.80665;//(m/s^2)
 
-static double rp_limit = 0.3;//(rad)
+static double rp_limit = 0.25;//(rad)
 static double y_vel_limit = 0.01;//(rad/s)
 static double y_d_tangent_deadzone = (double)0.05 * y_vel_limit;//(rad/s)
-static double T_limit = 160;//(N) 
+static double T_limit = 80;//(N) 
 static double altitude_limit = 1;//(m)
-static double XY_limit = 0.5;
+static double XY_limit = 1.0;
 static double XYZ_dot_limit=1;
 static double XYZ_ddot_limit=2;
 static double alpha_beta_limit=1;
 static double hardware_servo_limit=0.3;
 static double servo_command_limit = 0.3;
-static double tau_y_limit = 0.3;
+static double tau_y_limit = 1.0;
 
 double x_c_hat=0.0;
 double y_c_hat=0.0;
@@ -586,10 +586,10 @@ int main(int argc, char **argv){
 	angular_Acceleration = nh.advertise<geometry_msgs::Vector3>("ang_accel",100);
 	sine_wave_data = nh.advertise<geometry_msgs::Vector3>("sine_wave",100);
 	disturbance = nh.advertise<geometry_msgs::Vector3>("dhat",100);
-	linear_acceleration = nh.advertise<geometry_msgs::Vector3>("lin_acl",100);
+	linear_acceleration = nh.advertise<geometry_msgs::Vector3>("imu_lin_acl",100);
 
     ros::Subscriber dynamixel_state = nh.subscribe("joint_states",100,jointstateCallback,ros::TransportHints().tcpNoDelay());
-    ros::Subscriber att = nh.subscribe("/gx5/imu/data",1,imu_Callback,ros::TransportHints().tcpNoDelay());
+    ros::Subscriber att = nh.subscribe("/imu/data",1,imu_Callback,ros::TransportHints().tcpNoDelay());
     ros::Subscriber rc_in = nh.subscribe("/sbus",100,sbusCallback,ros::TransportHints().tcpNoDelay());
 	ros::Subscriber battery_checker = nh.subscribe("/battery",100,batteryCallback,ros::TransportHints().tcpNoDelay());
 	ros::Subscriber t265_pos=nh.subscribe("/t265_pos",100,posCallback,ros::TransportHints().tcpNoDelay());
@@ -699,15 +699,18 @@ void setCM(){
 	//Co-rotating type
 	CM << (y_c_hat+r_arm/r2)*cos(theta1)+(-(l_servo-z_c_hat)+xi)*sin(theta1)/r2,  (y_c_hat+r_arm/r2)*cos(theta2)+((l_servo-z_c_hat)-xi)*sin(theta2)/r2,   (y_c_hat-r_arm/r2)*cos(theta3)+((l_servo-z_c_hat)-xi)*sin(theta3)/r2,  (y_c_hat-r_arm/r2)*cos(theta4)+(-(l_servo-z_c_hat)+xi)*sin(theta4)/r2,
 	      -(x_c_hat-r_arm/r2)*cos(theta1)+((l_servo-z_c_hat)+xi)*sin(theta1)/r2, -(x_c_hat+r_arm/r2)*cos(theta2)+((l_servo-z_c_hat)+xi)*sin(theta2)/r2, -(x_c_hat+r_arm/r2)*cos(theta3)+(-(l_servo-z_c_hat)-xi)*sin(theta3)/r2, -(x_c_hat-r_arm/r2)*cos(theta4)+(-(l_servo-z_c_hat)-xi)*sin(theta4)/r2,
-		                                                        -xi*cos(theta1),                                                        xi*cos(theta2),                                                        -xi*cos(theta3),                                                         xi*cos(theta4),
+	      -xi*cos(theta1), xi*cos(theta2), -xi*cos(theta3), xi*cos(theta4),
 																   -cos(theta1),                                                          -cos(theta2),                                                           -cos(theta3),                                                           -cos(theta4);
     invCM = CM.inverse();
+//	      -xi*cos(theta1)+(y_c_hat-x_c_hat+r2*r_arm)*sin(theta1)/r2,  xi*cos(theta2)+(x_c_hat+y_c_hat+r2*r_arm)*sin(theta2)/r2,  -xi*cos(theta3)+(x_c_hat-y_c_hat+r2*r_arm)*sin(theta3)/r2,  xi*cos(theta4)+(-x_c_hat-y_c_hat+r2*r_arm)*sin(theta4)/r2,
 }
 
 void setSA(){
 	SA << F1/r2,  F2/r2, -F3/r2, -F4/r2,
-	      F1/r2, -F2/r2, -F3/r2,  F4/r2,
-		  (y_c_hat-x_c_hat+r2*r_arm)*F1/r2, (x_c_hat+y_c_hat+r2*r_arm)*F2/r2, (x_c_hat-y_c_hat+r2*r_arm)*F3/r2, (-x_c_hat-y_c_hat+r2*r_arm)*F4/r2;
+	      F1/r2, -F2/r2, -F3/r2,  F4/r2;//,
+	//	  (y_c_hat-x_c_hat+r2*r_arm)*F1/r2, (x_c_hat+y_c_hat+r2*r_arm)*F2/r2, (x_c_hat-y_c_hat+r2*r_arm)*F3/r2, (-x_c_hat-y_c_hat+r2*r_arm)*F4/r2;
+
+//	std::cout << "SA : \n" << SA <<std::endl;
 	pinvSA = SA.completeOrthogonalDecomposition().pseudoInverse();
 }
 void rpyT_ctrl() {
@@ -715,9 +718,21 @@ void rpyT_ctrl() {
 	y_d_tangent=y_vel_limit*(((double)Sbus[0]-(double)1500)/(double)500);
 	if(fabs(y_d_tangent)<y_d_tangent_deadzone || fabs(y_d_tangent)>y_vel_limit) y_d_tangent=0;
 	y_d+=y_d_tangent;
-	
-	Z_d = -altitude_limit*(((double)Sbus[2]-(double)1500)/(double)500)-altitude_limit;
-	T_d = -T_limit*(((double)Sbus[2]-(double)1500)/(double)500)-T_limit;
+	if(altitude_mode){
+		if(Sbus[2]>1800){
+			Z_d-=0.0005;
+		}
+		else if(Sbus[2]<1200){
+			Z_d+=0.0005;
+		}
+			
+		if(Z_d <-0.7) Z_d=-0.7;
+		if(Z_d > 0) Z_d=0;
+		//Z_d = -altitude_limit*(((double)Sbus[2]-(double)1500)/(double)500)-altitude_limit;
+	}
+	else{
+		T_d = -T_limit*(((double)Sbus[2]-(double)1500)/(double)500)-T_limit;
+	}
 	//ROS_INFO("%lf",T_d);
 
 	double e_r = 0;
@@ -729,17 +744,18 @@ void rpyT_ctrl() {
 	double e_X_dot = 0;
 	double e_Y_dot = 0;
 		
-	double global_X_ddot = (lin_vel.x - prev_lin_vel.x)/delta_t.count();
-	double global_Y_ddot = (lin_vel.y - prev_lin_vel.y)/delta_t.count();
-	x_ax_dot=-accel_cutoff_freq*x_ax+global_X_ddot;
-	x_ax+=x_ax_dot*delta_t.count();
-	lin_acl.x=accel_cutoff_freq*x_ax;
-	x_ay_dot=-accel_cutoff_freq*x_ay+global_Y_ddot;
-	x_ay+=x_ay_dot*delta_t.count();
-	lin_acl.y=accel_cutoff_freq*x_ay;
+	//double global_X_ddot = (lin_vel.x - prev_lin_vel.x)/delta_t.count();
+	//double global_Y_ddot = (lin_vel.y - prev_lin_vel.y)/delta_t.count();
+	//x_ax_dot=-accel_cutoff_freq*x_ax+global_X_ddot;
+	//x_ax+=x_ax_dot*delta_t.count();
+	//x_ay_dot=-accel_cutoff_freq*x_ay+global_Y_ddot;
+	//x_ay+=x_ay_dot*delta_t.count();
+	lin_acl.x=imu_lin_acc.x;//accel_cutoff_freq*x_ax;
+	lin_acl.y=imu_lin_acc.y;//accel_cutoff_freq*x_ay;
+	lin_acl.z=imu_lin_acc.z;
 	//ROS_INFO("%lf",time_count);
 
-	if(position_mode /*|| velocity_mode*/){
+	if(position_mode || velocity_mode){
 		if(position_mode){
 			X_d = X_d_base - XY_limit*(((double)Sbus[1]-(double)1500)/(double)500);
 			Y_d = Y_d_base + XY_limit*(((double)Sbus[3]-(double)1500)/(double)500);
@@ -754,10 +770,10 @@ void rpyT_ctrl() {
 			X_dot_d = Pp * e_X + Ip * e_X_i - Dp * lin_vel.x;
 			Y_dot_d = Pp * e_Y + Ip * e_Y_i - Dp * lin_vel.y;
 		}
-		/*if(velocity_mode){
+		if(velocity_mode){
 			X_dot_d = -XYZ_dot_limit*(((double)Sbus[1]-(double)1500)/(double)500);
 			Y_dot_d = XYZ_dot_limit*(((double)Sbus[3]-(double)1500)/(double)500);
-		}*/	
+		}	
 		if(fabs(X_dot_d) > XYZ_dot_limit) X_dot_d = (X_dot_d/fabs(X_dot_d))*XYZ_dot_limit;
 		if(fabs(Y_dot_d) > XYZ_dot_limit) Y_dot_d = (Y_dot_d/fabs(Y_dot_d))*XYZ_dot_limit;
 		//*/
@@ -779,8 +795,9 @@ void rpyT_ctrl() {
 		if(tilt_mode){
 			r_d = 0.0;
 			p_d = 0.0;
-			F_xd = mass*(X_ddot_d*cos(imu_rpy.z)*cos(imu_rpy.y)+Y_ddot_d*sin(imu_rpy.z)*cos(imu_rpy.y)-(Z_ddot_d-g)*sin(imu_rpy.y));
-			F_yd = mass*(-X_ddot_d*(cos(imu_rpy.x)*sin(imu_rpy.z)-cos(imu_rpy.z)*sin(imu_rpy.x)*sin(imu_rpy.y))+Y_ddot_d*(cos(imu_rpy.x)*cos(imu_rpy.z)+sin(imu_rpy.x)*sin(imu_rpy.y)*sin(imu_rpy.z))+(Z_ddot_d-g)*cos(imu_rpy.y)*sin(imu_rpy.x));
+			F_xd = mass*(X_ddot_d*cos(imu_rpy.z)*cos(imu_rpy.y)+Y_ddot_d*sin(imu_rpy.z)*cos(imu_rpy.y)-(Z_ddot_d)*sin(imu_rpy.y));
+			F_yd = mass*(-X_ddot_d*(cos(imu_rpy.x)*sin(imu_rpy.z)-cos(imu_rpy.z)*sin(imu_rpy.x)*sin(imu_rpy.y))+Y_ddot_d*(cos(imu_rpy.x)*cos(imu_rpy.z)+sin(imu_rpy.x)*sin(imu_rpy.y)*sin(imu_rpy.z))+(Z_ddot_d)*cos(imu_rpy.y)*sin(imu_rpy.x));
+
 			//if(position_mode) ROS_INFO("Position & Tilt !!!");
 			//else ROS_INFO("Velocity & Tilt !!!");
 		}
@@ -838,8 +855,8 @@ void rpyT_ctrl() {
 	if(altitude_mode){
 		Z_ddot_d = Pz * e_Z + Iz * e_Z_i - Dz * lin_vel.z;
 		desired_lin_vel.z = Z_ddot_d; // But this is desired acceleration
-		if(Sbus[6]>1500) F_zd = mass*(X_ddot_d*(sin(imu_rpy.x)*sin(imu_rpy.z)+cos(imu_rpy.x)*cos(imu_rpy.z)*sin(imu_rpy.y))-Y_ddot_d*(cos(imu_rpy.z)*sin(imu_rpy.x)-cos(imu_rpy.x)*sin(imu_rpy.y)*sin(imu_rpy.z))+(Z_ddot_d-g)*cos(imu_rpy.x)*cos(imu_rpy.y));
-		else F_zd = mass*(Z_ddot_d-g);
+		if(!attitude_mode) F_zd = mass*(X_ddot_d*(sin(imu_rpy.x)*sin(imu_rpy.z)+cos(imu_rpy.x)*cos(imu_rpy.z)*sin(imu_rpy.y))-Y_ddot_d*(cos(imu_rpy.z)*sin(imu_rpy.x)-cos(imu_rpy.x)*sin(imu_rpy.y)*sin(imu_rpy.z))+(Z_ddot_d)*cos(imu_rpy.x)*cos(imu_rpy.y));
+		else F_zd = mass*(Z_ddot_d);
 		//ROS_INFO("Altitude");
 	}
 	else{
@@ -869,8 +886,9 @@ void rpyT_ctrl() {
 
 	double tau_y_sin=(y_c_hat-x_c_hat+r2*r_arm)*F1/r2*sin(theta1)+(x_c_hat+y_c_hat+r2*r_arm)*F2/r2*sin(theta2)+(x_c_hat-y_c_hat+r2*r_arm)*F3/r2*sin(theta3)+(-x_c_hat-y_c_hat+r2*r_arm)*F4/r2*sin(theta4);
 	
-	u << tau_r_d, tau_p_d, tau_y_d-tau_y_sin, F_zd;
-	
+	u << tau_r_d, tau_p_d, tau_y_d, F_zd;
+	//u << tau_r_d, tau_p_d, tau_y_d-tau_y_sin, F_zd;
+	//std::cout << "tau_y_sin : " << tau_y_sin << "    ";	
 	prev_angular_Vel = imu_ang_vel;
 	ud_to_PWMs(tau_r_d, tau_p_d, tau_y_d, Thrust_d); //but not use 22.10.12
 	//ud_to_PWMs(tautilde_r_d, tautilde_p_d, tautilde_y_d, Thrust_d);
@@ -887,28 +905,34 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	F2 = F_cmd(1);
 	F3 = F_cmd(2);
 	F4 = F_cmd(3);
-	double tau_y_cos=-F1*xi*cos(theta1)-F2*xi*cos(theta2)-F3*xi*cos(theta3)-F4*xi*cos(theta4);
-	control_by_theta << F_xd, F_yd, tau_y_d-tau_y_cos;
-	sine_theta_command=pinvSA*control_by_theta;
+	//double tau_y_cos=-F1*xi*cos(theta1)+F2*xi*cos(theta2)-F3*xi*cos(theta3)+F4*xi*cos(theta4);
+	//control_by_theta << F_xd, F_yd, tau_y_d-tau_y_cos;
+	//std::cout << "tau_y_cos : " << tau_y_cos << std::endl;	
+	//std::cout << "pinvSA : \n" << pinvSA <<std::endl;
+	//setSA();
+	//sine_theta_command=pinvSA*control_by_theta;
+	//ROS_INFO("%lf %lf %lf %lf",sine_theta_command(0),sine_theta_command(1),sine_theta_command(2),sine_theta_command(3));
 	if(!tilt_mode){
 		theta1_command = 0.0;
-        theta2_command = 0.0;
+        	theta2_command = 0.0;
 		theta3_command = 0.0;
 		theta4_command = 0.0;
 	}
 	//Tilting type
 	else {
-		theta1_command = asin(sine_theta_command(0));
-		theta2_command = asin(sine_theta_command(1));
-		theta3_command = asin(sine_theta_command(2));
-		theta4_command = asin(sine_theta_command(3));
+		theta1_command = asin((F_xd+F_yd)/(F1+F3)/r2);
+		theta2_command = asin((F_xd-F_yd)/(F2+F4)/r2);
+		theta3_command = -theta1_command;//asin(sine_theta_command(2));
+		theta4_command = -theta2_command;//asin(sine_theta_command(3));
  		if(fabs(theta1_command)>hardware_servo_limit) theta1_command = (theta1_command/fabs(theta1_command))*hardware_servo_limit;
 		if(fabs(theta2_command)>hardware_servo_limit) theta2_command = (theta2_command/fabs(theta2_command))*hardware_servo_limit;
 		if(fabs(theta3_command)>hardware_servo_limit) theta3_command = (theta3_command/fabs(theta3_command))*hardware_servo_limit;
 		if(fabs(theta4_command)>hardware_servo_limit) theta4_command = (theta4_command/fabs(theta4_command))*hardware_servo_limit;
+
+		//ROS_INFO("%lf %lf %lf %lf",theta1_command, theta2_command, theta3_command, theta4_command);
 	}
 	
-
+	//pwm_Kill();
 	pwm_Command(Force_to_PWM(F1),Force_to_PWM(F2), Force_to_PWM(F3), Force_to_PWM(F4));
 	// ROS_INFO("1:%d, 2:%d, 3:%d, 4:%d",PWMs_cmd.data[0], PWMs_cmd.data[1], PWMs_cmd.data[2], PWMs_cmd.data[3]);
 	// Force_to_PWM(-T_d/4.0);
@@ -936,7 +960,7 @@ double Force_to_PWM(double F) {
 	else pwm = 1100.;
 	if (pwm > 1900)	pwm = 1900;
 	if(pwm < 1100) pwm = 1100;
-	if(altitude_mode){//altitude mode
+	/*if(altitude_mode){//altitude mode
 		if(Z_d_base<=0){
 			if(Z_d>Z_d_base && !start_flag) {
 				pwm=1100;
@@ -944,7 +968,7 @@ double Force_to_PWM(double F) {
 			else if(Z_d<Z_d_base) start_flag=true;
 		}
 		else pwm=param1;
-	}
+	}*/
 	return pwm;
 }
 
@@ -1023,17 +1047,17 @@ void sbusCallback(const std_msgs::Int16MultiArray::ConstPtr& array){
 
 	if(Sbus[6]<1300){
 		attitude_mode=true;
-		//velocity_mode=false;
+		velocity_mode=false;
 		position_mode=false;
 	}
 	else if(Sbus[6]<1700){
 		attitude_mode=false;
-		//velocity_mode=true;
+		velocity_mode=true;
 		position_mode=false;
 	}
 	else{
 		attitude_mode=false;
-		//velocity_mode=false;
+		velocity_mode=false;
 		position_mode=true;
 	}
 
