@@ -3,7 +3,7 @@
 # From_https://github.com/pwyong _from https://github.com/RealChestnut
 create : 2023_06_09
 
-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
+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
 
 
 #초기버전입니다 
