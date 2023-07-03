@@ -46,7 +46,7 @@ double freq=200;//controller loop frequency
 double pwm_freq=417.3;//pwm signal frequency
 
 std::chrono::duration<double> delta_t;
-int16_t Sbus[8];
+int16_t Sbus[10];
 int16_t PWM_d;
 int16_t loop_time;
 std_msgs::Int16MultiArray PWMs_cmd;
@@ -82,6 +82,10 @@ std_msgs::Float32 altitude_d;
 std_msgs::Float32 battery_voltage_msg;
 std_msgs::Float32 battery_real_voltage;
 std_msgs::Float32 dt;
+geometry_msgs::Vector3 external_force;
+geometry_msgs::Vector3 desired_position_change;
+geometry_msgs::Vector3 reference_position;
+
 bool servo_sw=false;
 double theta1_command, theta2_command, theta3_command, theta4_command;
 bool start_flag=false;
@@ -95,6 +99,7 @@ bool kill_mode = true;
 bool altitude_mode = false;
 bool tilt_mode = false;
 bool ESC_control = false;
+bool admittance_mode = false;
 //Thruster_cmd
 double F1 = 0;//desired propeller 1 force
 double F2 = 0;//desired propeller 2 force
@@ -160,6 +165,34 @@ double yaw_prev = 0;
 double yaw_now = 0;
 double base_yaw = 0;
 int yaw_rotate_count = 0;
+
+//Admittance control value
+double X_e = 0;
+double Y_e = 0;
+double X_r = 0;
+double Y_r = 0;
+double Z_r = 0;
+double X_e_x1=0;
+double X_e_x2=0;
+double X_e_x1_dot=0;
+double X_e_x2_dot=0;
+double Y_e_x1=0;
+double Y_e_x2=0;
+double Y_e_x1_dot=0;
+double Y_e_x2_dot=0;
+double M=0.5;
+double D=20.0;
+double K=0;
+double external_force_deadzone=3.5; //N
+
+//Force estimation lpf
+double Fe_x_x_dot = 0;
+double Fe_y_x_dot = 0;
+double Fe_z_x_dot = 0;
+double Fe_x_x = 0;
+double Fe_y_x = 0;
+double Fe_z_x = 0;
+double Fe_cutoff_freq = 1.0;
 //--------------------------------------------------------
 
 //General dimensions
@@ -344,10 +377,12 @@ void pwm_Kill();
 void pwm_Max();
 void pwm_Arm();
 void pwm_Calibration();
-void kalman_Filtering();
 void pid_Gain_Setting();
 void disturbance_Observer();
 void sine_wave_vibration();
+void get_Rotation_matrix();
+void external_force_estimation();
+void admittance_controller();
 //-------------------------------------------------------
 
 //Publisher Group--------------------------------------
@@ -374,6 +409,9 @@ ros::Publisher angular_Acceleration;
 ros::Publisher sine_wave_data;
 ros::Publisher disturbance;
 ros::Publisher linear_acceleration;
+ros::Publisher External_force_data;
+ros::Publisher reference_desired_pos_error;
+ros::Publisher reference_pos;
 //----------------------------------------------------
 
 //Control Matrix---------------------------------------
@@ -399,22 +437,12 @@ Eigen::Vector3d v;
 Eigen::Vector3d cam_att;
 //-----------------------------------------------------
 
-//Kalman_Filter----------------------------------------
-Eigen::MatrixXd F(6,6);
-Eigen::MatrixXd P(6,6);
-Eigen::MatrixXd H(3,6);
-Eigen::MatrixXd Q(6,6);
-Eigen::MatrixXd R(3,3);
-Eigen::MatrixXd K(6,3);
-Eigen::VectorXd x(6);
-Eigen::Vector3d z;
-Eigen::MatrixXd predicted_P(6,6);
-Eigen::VectorXd predicted_x(6);
-Eigen::Matrix3d gain_term;
-Eigen::MatrixXd covariance_term;
-geometry_msgs::Vector3 filtered_Angular_vel;
-geometry_msgs::Vector3 filtered_Angular_accel;
+//Rotation_Matrix--------------------------------------
+Eigen::Matrix3d Rotz;
+Eigen::Matrix3d Roty;
+Eigen::Matrix3d Rotx;
 //-----------------------------------------------------
+
 
 //Timer------------------------------------------------
 auto end  =std::chrono::high_resolution_clock::now();
@@ -474,9 +502,39 @@ double Amp_Z=1.0;
 //Accelerometer LPF------------------------------------
 double x_ax_dot = 0;
 double x_ay_dot = 0;
+double x_az_dot = 0;
 double x_ax = 0;
 double x_ay = 0;
-double accel_cutoff_freq = 5.0;
+double x_az = 0;
+double accel_cutoff_freq = 1.0;
+//-----------------------------------------------------
+//Position DOB-----------------------------------------
+double pos_dob_cutoff_freq=1.0; 
+
+Eigen::MatrixXd MinvQ_A(4,4);
+Eigen::MatrixXd MinvQ_B(4,1);
+Eigen::MatrixXd MinvQ_C(1,4);
+Eigen::MatrixXd Q_A(2,2);
+Eigen::MatrixXd Q_B(2,1);
+Eigen::MatrixXd Q_C(1,2);
+Eigen::MatrixXd MinvQ_X_x(4,1);
+Eigen::MatrixXd MinvQ_X_x_dot(4,1);
+Eigen::MatrixXd MinvQ_X_y(1,1);
+Eigen::MatrixXd Q_X_x(2,1);
+Eigen::MatrixXd Q_X_x_dot(2,1);
+Eigen::MatrixXd Q_X_y(1,1);
+Eigen::MatrixXd MinvQ_Y_x(4,1);
+Eigen::MatrixXd MinvQ_Y_x_dot(4,1);
+Eigen::MatrixXd MinvQ_Y_y(1,1);
+Eigen::MatrixXd Q_Y_x(2,1);
+Eigen::MatrixXd Q_Y_x_dot(2,1);
+Eigen::MatrixXd Q_Y_y(1,1);
+
+double dhat_X = 0;
+double dhat_Y = 0;
+double X_tilde_r = 0;
+double Y_tilde_r = 0;
+void position_dob();
 //-----------------------------------------------------
 int main(int argc, char **argv){
 	
@@ -554,14 +612,17 @@ int main(int argc, char **argv){
 
 	//----------------------------------------------------------
 	
-	//Kalman initialization-------------------------------------
-		// x << 0, 0, 0, 0, 0, 0;
-		// P << Eigen::MatrixXd::Identity(6,6);
-		// H << Eigen::MatrixXd::Identity(3,3), Eigen::MatrixXd::Zero(3,3);
-		// Q << Eigen::MatrixXd::Identity(3,3), Eigen::MatrixXd::Zero(3,3),
-		//      Eigen::MatrixXd::Zero(3,3), 100.*Eigen::MatrixXd::Identity(3,3);
-		// R << 0.0132*Eigen::MatrixXd::Identity(3,3);
-        //----------------------------------------------------------
+	MinvQ_A << -(tilt_Pp+r2*tilt_Dp*pos_dob_cutoff_freq)/tilt_Dp, -(tilt_Dp*pow(pos_dob_cutoff_freq,2)+r2*tilt_Pp*pos_dob_cutoff_freq+tilt_Ip)/tilt_Dp, -(tilt_Pp*pow(pos_dob_cutoff_freq,2)+r2*tilt_Ip*pos_dob_cutoff_freq)/tilt_Dp, -(tilt_Ip*pow(pos_dob_cutoff_freq,2))/tilt_Dp,
+	           1.0,   0,   0, 0,
+	             0, 1.0,   0, 0,
+	             0,   0, 1.0, 0;
+	MinvQ_B << 1.0, 0, 0, 0;
+	MinvQ_C << (mass*pos_dob_cutoff_freq)/tilt_Dp, pos_dob_cutoff_freq, (tilt_Pp*pos_dob_cutoff_freq)/tilt_Dp, (tilt_Ip*pos_dob_cutoff_freq)/tilt_Dp;
+
+	Q_A << -r2*pos_dob_cutoff_freq, -pow(pos_dob_cutoff_freq,2),
+                                   1.0,                           0;
+	Q_B << 1.0, 0;
+	Q_C << 0, pow(pos_dob_cutoff_freq,2);	
 	//Set Control Matrix----------------------------------------
 		setCM();
                 F_cmd << 0, 0, 0, 0;
@@ -587,10 +648,13 @@ int main(int argc, char **argv){
 	sine_wave_data = nh.advertise<geometry_msgs::Vector3>("sine_wave",100);
 	disturbance = nh.advertise<geometry_msgs::Vector3>("dhat",100);
 	linear_acceleration = nh.advertise<geometry_msgs::Vector3>("imu_lin_acl",100);
+	External_force_data = nh.advertise<geometry_msgs::Vector3>("external_force",100);
+	reference_desired_pos_error = nh.advertise<geometry_msgs::Vector3>("pos_e",100);
+	reference_pos = nh.advertise<geometry_msgs::Vector3>("pos_r",100);
 
-    ros::Subscriber dynamixel_state = nh.subscribe("joint_states",100,jointstateCallback,ros::TransportHints().tcpNoDelay());
-    ros::Subscriber att = nh.subscribe("/imu/data",1,imu_Callback,ros::TransportHints().tcpNoDelay());
-    ros::Subscriber rc_in = nh.subscribe("/sbus",100,sbusCallback,ros::TransportHints().tcpNoDelay());
+    	ros::Subscriber dynamixel_state = nh.subscribe("joint_states",100,jointstateCallback,ros::TransportHints().tcpNoDelay());
+   	ros::Subscriber att = nh.subscribe("/imu/data",1,imu_Callback,ros::TransportHints().tcpNoDelay());
+	ros::Subscriber rc_in = nh.subscribe("/sbus",100,sbusCallback,ros::TransportHints().tcpNoDelay());
 	ros::Subscriber battery_checker = nh.subscribe("/battery",100,batteryCallback,ros::TransportHints().tcpNoDelay());
 	ros::Subscriber t265_pos=nh.subscribe("/t265_pos",100,posCallback,ros::TransportHints().tcpNoDelay());
 	ros::Subscriber t265_rot=nh.subscribe("/t265_rot",100,rotCallback,ros::TransportHints().tcpNoDelay());
@@ -614,11 +678,14 @@ void publisherSet(){
 	angular_Accel.x = (imu_ang_vel.x-prev_angular_Vel.x)/delta_t.count();
 	angular_Accel.y = (imu_ang_vel.y-prev_angular_Vel.y)/delta_t.count();
 	angular_Accel.z = (imu_ang_vel.z-prev_angular_Vel.z)/delta_t.count();
+
 	if(!position_mode){
 		X_d_base=pos.x;
 		Y_d_base=pos.y;
 		X_d = X_d_base;
 		Y_d = Y_d_base;
+		X_r = X_d;
+		Y_r = Y_d;
 		e_X_i=0;
 		e_Y_i=0;
 		if(attitude_mode){
@@ -691,6 +758,9 @@ void publisherSet(){
 	sine_wave_data.publish(sine_wave); //not use
 	disturbance.publish(dhat); // not use
 	linear_acceleration.publish(lin_acl);
+	External_force_data.publish(external_force);
+	reference_desired_pos_error.publish(desired_position_change);
+	reference_pos.publish(reference_position);
 	prev_angular_Vel = imu_ang_vel;
 	prev_lin_vel = lin_vel;
 }
@@ -744,24 +814,26 @@ void rpyT_ctrl() {
 	double e_X_dot = 0;
 	double e_Y_dot = 0;
 		
-	//double global_X_ddot = (lin_vel.x - prev_lin_vel.x)/delta_t.count();
-	//double global_Y_ddot = (lin_vel.y - prev_lin_vel.y)/delta_t.count();
-	//x_ax_dot=-accel_cutoff_freq*x_ax+global_X_ddot;
-	//x_ax+=x_ax_dot*delta_t.count();
-	//x_ay_dot=-accel_cutoff_freq*x_ay+global_Y_ddot;
-	//x_ay+=x_ay_dot*delta_t.count();
-	lin_acl.x=imu_lin_acc.x;//accel_cutoff_freq*x_ax;
-	lin_acl.y=imu_lin_acc.y;//accel_cutoff_freq*x_ay;
-	lin_acl.z=imu_lin_acc.z;
 	//ROS_INFO("%lf",time_count);
 
+	if(tilt_mode){
+		external_force_estimation();
+		admittance_controller();
+	//	position_dob();
+	}
+	else{
+		X_e_x1=0;
+		X_e_x2=0;
+		Y_e_x1=0;
+		Y_e_x2=0;
+	}
 	if(position_mode || velocity_mode){
 		if(position_mode){
 			X_d = X_d_base - XY_limit*(((double)Sbus[1]-(double)1500)/(double)500);
 			Y_d = Y_d_base + XY_limit*(((double)Sbus[3]-(double)1500)/(double)500);
 		
-			e_X = X_d - pos.x;
-			e_Y = Y_d - pos.y;
+			e_X = X_r-pos.x;//X_d - pos.x;
+			e_Y = Y_r-pos.y;//Y_d - pos.y;
 			e_X_i += e_X * delta_t.count();
 			if (fabs(e_X_i) > pos_integ_limit) e_X_i = (e_X_i / fabs(e_X_i)) * pos_integ_limit;
 			e_Y_i += e_Y * delta_t.count();
@@ -1035,7 +1107,7 @@ sensor_msgs::JointState servo_msg_create(double desired_theta1, double desired_t
 }
 
 void sbusCallback(const std_msgs::Int16MultiArray::ConstPtr& array){
-	for(int i=0;i<8;i++){
+	for(int i=0;i<10;i++){
 		Sbus[i]=map<int16_t>(array->data[i], 352, 1696, 1000, 2000);
 	}
 	
@@ -1063,6 +1135,9 @@ void sbusCallback(const std_msgs::Int16MultiArray::ConstPtr& array){
 
 	if(Sbus[7]>1500) tilt_mode=true;
 	else tilt_mode=false;
+
+	if(Sbus[9]>1500) admittance_mode=true;
+	else admittance_mode=true;
 //	ROS_INFO("%d, %d, %d, %d, %d, %d, %d, %d",Sbus[0],Sbus[1],Sbus[2],Sbus[3],Sbus[4],Sbus[5],Sbus[6],Sbus[7]);
 	//if(Sbus[9]>1500) ESC_control=true;
 	//else ESC_control=false;
@@ -1243,22 +1318,6 @@ void pwm_Calibration(){
 //ROS_INFO("Sbus[6] : %d", Sbus[6]);	
 }
 
-// void kalman_Filtering(){
-// 	z << imu_ang_vel.x, imu_ang_vel.y, imu_ang_vel.z;
-// 	predicted_x = F*x;
-// 	predicted_P = F*P*F.transpose()+Q;
-// 	gain_term = H*predicted_P*H.transpose()+R;
-// 	K=predicted_P*H.transpose()*gain_term.inverse();
-// 	x=predicted_x+K*(z-H*predicted_x);
-// 	covariance_term = Eigen::MatrixXd::Identity(6,6)-K*H;
-// 	P=covariance_term*predicted_P*covariance_term.transpose()+K*R*K.transpose();
-// 	filtered_Angular_vel.x=x(0);
-// 	filtered_Angular_vel.y=x(1);
-// 	filtered_Angular_vel.z=x(2);
-// 	filtered_Angular_accel.x=x(3);
-// 	filtered_Angular_accel.y=x(4);
-// 	filtered_Angular_accel.z=x(5);
-// }
 
 void pid_Gain_Setting(){
 	if(Sbus[7]<=1500){
@@ -1386,4 +1445,109 @@ void sine_wave_vibration(){
 	sine_wave.x = vibration1;
 	sine_wave.y = vibration2;
 	time_count += delta_t.count();
+}
+
+void get_Rotation_matrix(){
+	Rotz << cos(imu_rpy.z), -sin(imu_rpy.z),   0,
+	        sin(imu_rpy.z),  cos(imu_rpy.z),   0,
+		             0,               0, 1.0;
+
+	Roty << cos(imu_rpy.y),   0, sin(imu_rpy.y),
+	                     0, 1.0,              0,
+	       -sin(imu_rpy.y),   0, cos(imu_rpy.y);
+
+	Rotx << 1.0,              0,               0,
+                  0, cos(imu_rpy.x), -sin(imu_rpy.x),
+                  0, sin(imu_rpy.x),  cos(imu_rpy.x);		  
+}
+void external_force_estimation(){
+	get_Rotation_matrix();
+		
+	x_ax_dot=-accel_cutoff_freq*x_ax+imu_lin_acc.x;
+	x_ax+=x_ax_dot*delta_t.count();
+	x_ay_dot=-accel_cutoff_freq*x_ay+imu_lin_acc.y;
+	x_ay+=x_ay_dot*delta_t.count();
+	x_az_dot=-accel_cutoff_freq*x_az+imu_lin_acc.z;
+	x_az+=x_az_dot*delta_t.count();
+	lin_acl.x=accel_cutoff_freq*x_ax;
+	lin_acl.y=accel_cutoff_freq*x_ay;
+	lin_acl.z=accel_cutoff_freq*x_az;
+
+	double Fx=1.0/4.0*mass*g*(sin(theta1)+sin(theta2)-sin(theta3)-sin(theta4))/r2;
+	double Fy=1.0/4.0*mass*g*(sin(theta1)-sin(theta2)-sin(theta3)+sin(theta4))/r2;
+	double Fz=-mass*g;
+
+	double body_x_ddot_error=lin_acl.x-Fx/mass;
+	double body_y_ddot_error=lin_acl.y-Fy/mass;
+	double body_z_ddot_error=lin_acl.z-Fz/mass;
+
+	Eigen::Vector3d Fe;
+	Eigen::Vector3d body_accel_error;
+
+	body_accel_error << body_x_ddot_error, body_y_ddot_error, body_z_ddot_error;
+	Fe = mass*Rotz*Roty*Rotx*body_accel_error;
+	
+	Fe_x_x_dot = -Fe_cutoff_freq*Fe_x_x+Fe(0);
+	Fe_x_x+=Fe_x_x_dot*delta_t.count();
+	Fe_y_x_dot = -Fe_cutoff_freq*Fe_y_x+Fe(1);
+	Fe_y_x+=Fe_y_x_dot*delta_t.count();
+	Fe_z_x_dot = -Fe_cutoff_freq*Fe_z_x+Fe(2);
+	Fe_z_x+=Fe_z_x_dot*delta_t.count();
+
+	external_force.x=Fe_cutoff_freq*Fe_x_x;
+	external_force.y=Fe_cutoff_freq*Fe_y_x;
+	external_force.z=Fe_cutoff_freq*Fe_z_x;
+
+	if(fabs(external_force.x)<external_force_deadzone) external_force.x=0;
+	if(fabs(external_force.y)<external_force_deadzone) external_force.y=0;
+	if(fabs(external_force.z)<external_force_deadzone) external_force.z=0;
+}
+
+void admittance_controller(){
+	
+		X_e_x1_dot=-D/M*X_e_x1-K/M*X_e_x2+external_force.x;
+		X_e_x2_dot=X_e_x1;
+		X_e_x1+=X_e_x1_dot*delta_t.count();
+		X_e_x2+=X_e_x2_dot*delta_t.count();
+		X_e=-1.0/M*X_e_x2;
+	
+		Y_e_x1_dot=-D/M*Y_e_x1-K/M*X_e_x2+external_force.y;
+		Y_e_x2_dot=Y_e_x1;
+		Y_e_x1+=Y_e_x1_dot*delta_t.count();
+		Y_e_x2+=Y_e_x2_dot*delta_t.count();
+		Y_e=-1.0/M*Y_e_x2;
+	
+	X_r=X_d-X_e;
+	Y_r=Y_d-Y_e;
+	Z_r=Z_d;
+
+	desired_position_change.x=X_r;
+	desired_position_change.y=Y_r;
+	
+}
+
+void position_dob(){
+	MinvQ_X_x_dot=MinvQ_A*MinvQ_X_x+MinvQ_B*pos.x;
+	MinvQ_X_x+=MinvQ_X_x_dot*delta_t.count();
+	MinvQ_X_y=MinvQ_C*MinvQ_X_x;
+	
+	Q_X_x_dot=Q_A*Q_X_x+Q_B*X_tilde_r;
+	Q_X_x+=Q_X_x_dot*delta_t.count();
+	Q_X_y=Q_C*Q_X_x;
+	dhat_X=MinvQ_X_y(0)-Q_X_y(0);
+
+	MinvQ_Y_x_dot=MinvQ_A*MinvQ_Y_x+MinvQ_B*pos.y;
+	MinvQ_Y_x+=MinvQ_Y_x_dot*delta_t.count();
+	MinvQ_Y_y=MinvQ_C*MinvQ_Y_x;
+	
+	Q_Y_x_dot=Q_A*Q_Y_x+Q_B*Y_tilde_r;
+	Q_Y_x+=Q_Y_x_dot*delta_t.count();
+	Q_Y_y=Q_C*Q_Y_x;
+	dhat_Y=MinvQ_Y_y(0)-Q_Y_y(0);
+
+	X_tilde_r=X_r-dhat_X;
+	Y_tilde_r=Y_r-dhat_Y;
+	
+	reference_position.x=X_tilde_r;
+	reference_position.y=Y_tilde_r;
 }
