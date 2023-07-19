@@ -15,11 +15,11 @@ int main(int argc, char **argv){
     static_transformStamped.header.stamp = ros::Time::now();
     static_transformStamped.header.frame_id="world";
     static_transformStamped.child_frame_id="rs_t265_odom_frame";
-    static_transformStamped.transform.translation.x=-0.350;
-    static_transformStamped.transform.translation.y=0.480;
-    static_transformStamped.transform.translation.z=0.285;
+    static_transformStamped.transform.translation.x=0.01078;
+    static_transformStamped.transform.translation.y=-0.00067;
+    static_transformStamped.transform.translation.z=0.12515;
     tf2::Quaternion quat;
-    quat.setRPY(0.0,0.0*PI/180.0,90*PI/180.0);
+    quat.setRPY(0.0,0.0,-135.0*PI/180.0);
     static_transformStamped.transform.rotation.x=quat.x();
     static_transformStamped.transform.rotation.y=quat.y();
     static_transformStamped.transform.rotation.z=quat.z();
