@@ -766,10 +766,10 @@ void publisherSet(){
 }
 
 void setCM(){
-	//Co-rotating type
+	//Co-rotating type //2023_07_27 update
 	CM << (y_c_hat+r_arm/r2)*cos(theta1)+(-(l_servo-z_c_hat)+xi)*sin(theta1)/r2,  (y_c_hat+r_arm/r2)*cos(theta2)+((l_servo-z_c_hat)-xi)*sin(theta2)/r2,   (y_c_hat-r_arm/r2)*cos(theta3)+((l_servo-z_c_hat)-xi)*sin(theta3)/r2,  (y_c_hat-r_arm/r2)*cos(theta4)+(-(l_servo-z_c_hat)+xi)*sin(theta4)/r2,
 	      -(x_c_hat-r_arm/r2)*cos(theta1)+((l_servo-z_c_hat)+xi)*sin(theta1)/r2, -(x_c_hat+r_arm/r2)*cos(theta2)+((l_servo-z_c_hat)+xi)*sin(theta2)/r2, -(x_c_hat+r_arm/r2)*cos(theta3)+(-(l_servo-z_c_hat)-xi)*sin(theta3)/r2, -(x_c_hat-r_arm/r2)*cos(theta4)+(-(l_servo-z_c_hat)-xi)*sin(theta4)/r2,
-	      -xi*cos(theta1), xi*cos(theta2), -xi*cos(theta3), xi*cos(theta4),
+	      -xi*cos(theta1)+(r_arm-(x_c_hat-y_c_hat)/r2)*sin(theta1) 			   ,   xi*cos(theta2)+(r_arm+(x_c_hat+y_c_hat)/r2)*sin(theta2)			  ,   -xi*cos(theta3)+(r_arm+(x_c_hat-y_c_hat)/r2)*sin(theta3)			  ,   xi*cos(theta4)+(r_arm-(x_c_hat+y_c_hat)/r2)*sin(theta4),
 																   -cos(theta1),                                                          -cos(theta2),                                                           -cos(theta3),                                                           -cos(theta4);
     invCM = CM.inverse();
 //	      -xi*cos(theta1)+(y_c_hat-x_c_hat+r2*r_arm)*sin(theta1)/r2,  xi*cos(theta2)+(x_c_hat+y_c_hat+r2*r_arm)*sin(theta2)/r2,  -xi*cos(theta3)+(x_c_hat-y_c_hat+r2*r_arm)*sin(theta3)/r2,  xi*cos(theta4)+(-x_c_hat-y_c_hat+r2*r_arm)*sin(theta4)/r2,
