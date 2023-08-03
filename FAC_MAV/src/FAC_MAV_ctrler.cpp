@@ -424,7 +424,7 @@ Eigen::VectorXd F_cmd(4);
 Eigen::VectorXd sine_theta_command(4);
 Eigen::VectorXd control_by_theta(3);
 Eigen::MatrixXd invCM(4,4);
-Eigen::MatrixXd pinvSA(4,3);
+//Eigen::MatrixXd pinvSA(4,3);
 //-----------------------------------------------------
 
 //Linear_velocity--------------------------------------
@@ -783,7 +783,7 @@ void setSA(){
 	//	  (y_c_hat-x_c_hat+r2*r_arm)*F1/r2, (x_c_hat+y_c_hat+r2*r_arm)*F2/r2, (x_c_hat-y_c_hat+r2*r_arm)*F3/r2, (-x_c_hat-y_c_hat+r2*r_arm)*F4/r2;
 
 //	std::cout << "SA : \n" << SA <<std::endl;
-	pinvSA = SA.completeOrthogonalDecomposition().pseudoInverse();
+	// pinvSA = SA.completeOrthogonalDecomposition().pseudoInverse();
 }
 void rpyT_ctrl() {
 	pid_Gain_Setting();
@@ -986,7 +986,7 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	//std::cout << "tau_y_cos : " << tau_y_cos << std::endl;	
 	//std::cout << "pinvSA : \n" << pinvSA <<std::endl;
 	setSA();
-	sine_theta_command=pinvSA*control_by_theta;
+	sine_theta_command=SA*control_by_theta;
 	//ROS_INFO("%lf %lf %lf %lf",sine_theta_command(0),sine_theta_command(1),sine_theta_command(2),sine_theta_command(3));
 	if(!tilt_mode){
 		theta1_command = 0.0;
