@@ -417,7 +417,7 @@ ros::Publisher reference_pos;
 //Control Matrix---------------------------------------
 //Eigen::MatrixXd CM(4,8);
 Eigen::MatrixXd CM(4,4); //Thrust Allocation
-Eigen::MatrixXd SA(3,4); //Servo Allocation
+Eigen::MatrixXd SA(4,3); //Servo Allocation
 //Eigen::Vector4d u;
 Eigen::VectorXd u(4);
 Eigen::VectorXd F_cmd(4);
@@ -776,8 +776,10 @@ void setCM(){
 }
 
 void setSA(){
-	SA << F1/r2,  F2/r2, -F3/r2, -F4/r2,
-	      F1/r2, -F2/r2, -F3/r2,  F4/r2;//,
+	SA << (r2/(F1*4)),  (r2/(F1*4)), (1/(r_arm*F1*4)),
+		(r2/(F2*4)),  (-r2/(F2*4)), (1/(r_arm*F2*4)),
+		(-r2/(F3*4)),  (-r2/(F3*4)), (1/(r_arm*F3*4)),
+		(-r2/(F4*4)),  (r2/(F4*4)), (1/(r_arm*F4*4));		// 2023.08.03 update
 	//	  (y_c_hat-x_c_hat+r2*r_arm)*F1/r2, (x_c_hat+y_c_hat+r2*r_arm)*F2/r2, (x_c_hat-y_c_hat+r2*r_arm)*F3/r2, (-x_c_hat-y_c_hat+r2*r_arm)*F4/r2;
 
 //	std::cout << "SA : \n" << SA <<std::endl;
@@ -956,7 +958,6 @@ void rpyT_ctrl() {
 	force_d.y = F_yd;
 	force_d.z = F_zd;
 
-	double tau_y_sin=(y_c_hat-x_c_hat+r2*r_arm)*F1/r2*sin(theta1)+(x_c_hat+y_c_hat+r2*r_arm)*F2/r2*sin(theta2)+(x_c_hat-y_c_hat+r2*r_arm)*F3/r2*sin(theta3)+(-x_c_hat-y_c_hat+r2*r_arm)*F4/r2*sin(theta4);
 	
 	u << tau_r_d, tau_p_d, tau_y_d, F_zd;
 	//u << tau_r_d, tau_p_d, tau_y_d-tau_y_sin, F_zd;
@@ -977,30 +978,33 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	F2 = F_cmd(1);
 	F3 = F_cmd(2);
 	F4 = F_cmd(3);
+
+	double tau_y_th=r_arm*(sin(theta1)*F1 + sin(theta2)*F2 + sin(theta3)*F3 + sin(theta4)*F4) //2023.08.03 update
+
 	//double tau_y_cos=-F1*xi*cos(theta1)+F2*xi*cos(theta2)-F3*xi*cos(theta3)+F4*xi*cos(theta4);
-	//control_by_theta << F_xd, F_yd, tau_y_d-tau_y_cos;
+	control_by_theta << F_xd, F_yd, tau_y_th;
 	//std::cout << "tau_y_cos : " << tau_y_cos << std::endl;	
 	//std::cout << "pinvSA : \n" << pinvSA <<std::endl;
-	//setSA();
-	//sine_theta_command=pinvSA*control_by_theta;
+	setSA();
+	sine_theta_command=pinvSA*control_by_theta;
 	//ROS_INFO("%lf %lf %lf %lf",sine_theta_command(0),sine_theta_command(1),sine_theta_command(2),sine_theta_command(3));
 	if(!tilt_mode){
 		theta1_command = 0.0;
-        	theta2_command = 0.0;
+        theta2_command = 0.0;
 		theta3_command = 0.0;
 		theta4_command = 0.0;
 	}
 	//Tilting type
 	else {
-		theta1_command = asin((F_xd+F_yd)/(F1+F3)/r2);
-		theta2_command = asin((F_xd-F_yd)/(F2+F4)/r2);
-		theta3_command = -theta1_command;//asin(sine_theta_command(2));
-		theta4_command = -theta2_command;//asin(sine_theta_command(3));
+		theta1_command = asin(sine_theta_command(1));
+		theta2_command = asin(sine_theta_command(2));
+		theta3_command = asin(sine_theta_command(3));
+		theta4_command = asin(sine_theta_command(4));
  		if(fabs(theta1_command)>hardware_servo_limit) theta1_command = (theta1_command/fabs(theta1_command))*hardware_servo_limit;
 		if(fabs(theta2_command)>hardware_servo_limit) theta2_command = (theta2_command/fabs(theta2_command))*hardware_servo_limit;
 		if(fabs(theta3_command)>hardware_servo_limit) theta3_command = (theta3_command/fabs(theta3_command))*hardware_servo_limit;
 		if(fabs(theta4_command)>hardware_servo_limit) theta4_command = (theta4_command/fabs(theta4_command))*hardware_servo_limit;
-
+		//2023.08.03 udpate
 		//ROS_INFO("%lf %lf %lf %lf",theta1_command, theta2_command, theta3_command, theta4_command);
 	}
 	
@@ -1186,15 +1190,13 @@ void t265OdomCallback(const nav_msgs::Odometry::ConstPtr& msg){
 	tf::Matrix3x3(quat).getRPY(cam_att(0),cam_att(1),cam_att(2));
 	cam_v << t265_lin_vel.x, t265_lin_vel.y, t265_lin_vel.z;
 	
-	R_v << 0, 1, 0,
-	    	1, 0, 0,
-		0, 0, -1;
-	/*
-	R_v << cos(pi/2.), -sin(pi/2.),  0.,
- 	       sin(pi/2.),  cos(pi/2.),  0.,
-	                0.,           0.,  1.;
-	*/
-	v = R_v*cam_v;
+	
+	R_v << 0, -r2/2, r2/2,
+	    	0, -r2/2, -r2/2,
+		1, 0, 0;
+	
+	
+	v = R_v*cam_v*;
 
 	double global_X_dot = v(2)*(sin(imu_rpy.x)*sin(imu_rpy.z)+cos(imu_rpy.x)*cos(imu_rpy.z)*sin(imu_rpy.y))-v(1)*(cos(imu_rpy.x)*sin(imu_rpy.z)-cos(imu_rpy.z)*sin(imu_rpy.x)*sin(imu_rpy.y))+v(0)*cos(imu_rpy.z)*cos(imu_rpy.y);
 	double global_Y_dot = v(1)*(cos(imu_rpy.x)*cos(imu_rpy.z)+sin(imu_rpy.x)*sin(imu_rpy.z)*sin(imu_rpy.y))-v(2)*(cos(imu_rpy.z)*sin(imu_rpy.x)-cos(imu_rpy.x)*sin(imu_rpy.z)*sin(imu_rpy.y))+v(0)*cos(imu_rpy.y)*sin(imu_rpy.z);
