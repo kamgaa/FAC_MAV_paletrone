@@ -3,6 +3,7 @@
 //2022.08.XX DOB (Disturbance Observer) Application
 //2022.09.05 ESC (Extremum Seeking Control) Application
 //2022.09.21 Controller mode selection Application
+//2023.08.03 New Controll allocation
 
 #include <ros/ros.h>
 #include <iostream>
@@ -124,6 +125,7 @@ double e_Z_dot_i = 0;//Z velocity error integration
 double tau_r_d = 0;//roll  desired torque (N.m)
 double tau_p_d = 0;//pitch desired torque(N.m)
 double tau_y_d = 0;//yaw desired torque (N.m)
+double tau_y_d_non_sat=0;//yaw deried torque non-saturation (N.m)
 
 double Thrust_d = 0;//altitude desired thrust(N)
 //ud_cmd
@@ -819,8 +821,8 @@ void rpyT_ctrl() {
 	//ROS_INFO("%lf",time_count);
 
 	if(tilt_mode){
-		external_force_estimation();
-		admittance_controller();
+	//	external_force_estimation();
+	//	admittance_controller();
 	//	position_dob();
 	}
 	else{
@@ -850,7 +852,7 @@ void rpyT_ctrl() {
 		}	
 		if(fabs(X_dot_d) > XYZ_dot_limit) X_dot_d = (X_dot_d/fabs(X_dot_d))*XYZ_dot_limit;
 		if(fabs(Y_dot_d) > XYZ_dot_limit) Y_dot_d = (Y_dot_d/fabs(Y_dot_d))*XYZ_dot_limit;
-		//*/
+		
 		desired_lin_vel.x = X_dot_d;
 		desired_lin_vel.y = Y_dot_d;
 	
@@ -924,6 +926,7 @@ void rpyT_ctrl() {
 	tau_r_d = Pa * e_r + Ia * e_r_i + Da * (-imu_ang_vel.x);//- (double)0.48;
 	tau_p_d = Pa * e_p + Ia * e_p_i + Da * (-imu_ang_vel.y);//+ (double)0.18; 
 	tau_y_d = Py * e_y + Dy * (-imu_ang_vel.z);
+	tau_y_d_non_sat=tau_y_d;
 	if(fabs(tau_y_d) > tau_y_limit) tau_y_d = tau_y_d/fabs(tau_y_d)*tau_y_limit;
 	
 	if(altitude_mode){
@@ -979,7 +982,9 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	F3 = F_cmd(2);
 	F4 = F_cmd(3);
 
-	double tau_y_th=r_arm*(sin(theta1)*F1 + sin(theta2)*F2 + sin(theta3)*F3 + sin(theta4)*F4) //2023.08.03 update
+	double tau_y_th=tau_y_d_non_sat-tau_y_d;
+
+	//	(r_arm*(sin(theta1)*F1 + sin(theta2)*F2 + sin(theta3)*F3 + sin(theta4)*F4)); //2023.08.03 update
 
 	//double tau_y_cos=-F1*xi*cos(theta1)+F2*xi*cos(theta2)-F3*xi*cos(theta3)+F4*xi*cos(theta4);
 	control_by_theta << F_xd, F_yd, tau_y_th;
@@ -996,10 +1001,10 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	}
 	//Tilting type
 	else {
-		theta1_command = asin(sine_theta_command(1));
-		theta2_command = asin(sine_theta_command(2));
-		theta3_command = asin(sine_theta_command(3));
-		theta4_command = asin(sine_theta_command(4));
+		theta1_command = asin(sine_theta_command(0));
+		theta2_command = asin(sine_theta_command(1));
+		theta3_command = asin(sine_theta_command(2));
+		theta4_command = asin(sine_theta_command(3));
  		if(fabs(theta1_command)>hardware_servo_limit) theta1_command = (theta1_command/fabs(theta1_command))*hardware_servo_limit;
 		if(fabs(theta2_command)>hardware_servo_limit) theta2_command = (theta2_command/fabs(theta2_command))*hardware_servo_limit;
 		if(fabs(theta3_command)>hardware_servo_limit) theta3_command = (theta3_command/fabs(theta3_command))*hardware_servo_limit;
@@ -1196,7 +1201,7 @@ void t265OdomCallback(const nav_msgs::Odometry::ConstPtr& msg){
 		1, 0, 0;
 	
 	
-	v = R_v*cam_v*;
+	v = R_v*cam_v;
 
 	double global_X_dot = v(2)*(sin(imu_rpy.x)*sin(imu_rpy.z)+cos(imu_rpy.x)*cos(imu_rpy.z)*sin(imu_rpy.y))-v(1)*(cos(imu_rpy.x)*sin(imu_rpy.z)-cos(imu_rpy.z)*sin(imu_rpy.x)*sin(imu_rpy.y))+v(0)*cos(imu_rpy.z)*cos(imu_rpy.y);
 	double global_Y_dot = v(1)*(cos(imu_rpy.x)*cos(imu_rpy.z)+sin(imu_rpy.x)*sin(imu_rpy.z)*sin(imu_rpy.y))-v(2)*(cos(imu_rpy.z)*sin(imu_rpy.x)-cos(imu_rpy.x)*sin(imu_rpy.z)*sin(imu_rpy.y))+v(0)*cos(imu_rpy.y)*sin(imu_rpy.z);
