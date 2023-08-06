@@ -1,17 +1,22 @@
+//#############################CODE UPDATE HISTORY ##################################
+
+/*
+			███╗   ███╗    ██████╗     ██╗     
+			████╗ ████║    ██╔══██╗    ██║     
+			██╔████╔██║    ██████╔╝    ██║     
+			██║╚██╔╝██║    ██╔══██╗    ██║     
+			██║ ╚═╝ ██║    ██║  ██║    ███████                                                                           
+*/
+
 //2022.05.16 Coaxial-Octorotor version
 //2022.06.23 Ground Station Application
 //2022.08.XX DOB (Disturbance Observer) Application
 //2022.09.05 ESC (Extremum Seeking Control) Application
 //2022.09.21 Controller mode selection Application
-//2023.08.03 New Controll allocation
-/*
-		███╗   ███╗    ██████╗     ██╗      @
-		████╗ ████║    ██╔══██╗    ██║     
-		██╔████╔██║    ██████╔╝    ██║     
-		██║╚██╔╝██║    ██╔══██╗    ██║     
-		██║ ╚═╝ ██║    ██║  ██║    ███████╗
-		╚═╝     ╚═╝    ╚═╝  ╚═╝    ╚══════╝
-*/
+//2023.08.05 Devide tilt mode rp_rains to r_gains, p_gains(Par,Dar,Iar // Pay,Day,Iay)
+//2023.08.05 SA change (4,3) -> (4,4)
+//####################################################################################
+
 #include <ros/ros.h>
 #include <iostream>
 #include <eigen3/Eigen/Core>
@@ -230,9 +235,9 @@ static double XY_limit = 1.0;
 static double XYZ_dot_limit=1;
 static double XYZ_ddot_limit=2;
 static double alpha_beta_limit=1;
-static double hardware_servo_limit=0.3;
-static double servo_command_limit = 0.3;
-static double tau_y_limit = 1.0;
+static double hardware_servo_limit=0.15;
+static double servo_command_limit = 0.15;
+static double tau_y_limit = 1.5; // 1.0
 
 double x_c_hat=0.0;
 double y_c_hat=0.0;
@@ -247,11 +252,20 @@ double z_integ_limit=100;
 double pos_integ_limit=10;
 double vel_integ_limit=10;
 
-//Roll, Pitch PID gains
+//Roll,Pitch PID gains
 double Pa=3.5;
 double Ia=0.4;
 double Da=0.5;
 
+//Roll PID gains
+double Par=3.5;
+double Iar=0.4;
+double Dar=0.5;
+
+//Pitch PID gains
+double Pap=0.0;
+double Iap=0.0;
+double Dap=0.0;
 
 //Yaw PID gains
 double Py=2.0;
@@ -280,7 +294,8 @@ double conv_Pv, conv_Iv, conv_Dv;
 double conv_Pp, conv_Ip, conv_Dp;
 
 //Tilt Flight Mode Control Gains
-double tilt_Pa, tilt_Ia, tilt_Da;
+double tilt_Par, tilt_Iar, tilt_Dar;
+double tilt_Pap, tilt_Iap, tilt_Dap;
 double tilt_Py, tilt_Dy;
 double tilt_Pz, tilt_Iz, tilt_Dz;
 double tilt_Pv, tilt_Iv, tilt_Dv;
@@ -426,14 +441,14 @@ ros::Publisher reference_pos;
 //Control Matrix---------------------------------------
 //Eigen::MatrixXd CM(4,8);
 Eigen::MatrixXd CM(4,4); //Thrust Allocation
-Eigen::MatrixXd SA(4,3); //Servo Allocation
+Eigen::MatrixXd SA(4,4); //Servo Allocation
 //Eigen::Vector4d u;
 Eigen::VectorXd u(4);
 Eigen::VectorXd F_cmd(4);
 Eigen::VectorXd sine_theta_command(4);
-Eigen::VectorXd control_by_theta(3);
+Eigen::VectorXd control_by_theta(4);
 Eigen::MatrixXd invCM(4,4);
-//Eigen::MatrixXd pinvSA(4,3);
+Eigen::MatrixXd invSA(4,4);
 //-----------------------------------------------------
 
 //Linear_velocity--------------------------------------
@@ -596,9 +611,12 @@ int main(int argc, char **argv){
 
 		//Tilt Flight Mode Control Gains
 			//Roll, Pitch PID gains
-			tilt_Pa=nh.param<double>("tilt_attitude_rp_P_gain",3.5);
-			tilt_Ia=nh.param<double>("tilt_attitude_rp_I_gain",0.4);
-			tilt_Da=nh.param<double>("tilt_attitude_rp_D_gain",0.5);
+			tilt_Par=nh.param<double>("tilt_attitude_r_P_gain",3.5);
+			tilt_Iar=nh.param<double>("tilt_attitude_r_I_gain",3.5);
+			tilt_Dar=nh.param<double>("tilt_attitude_r_D_gain",3.5);
+			tilt_Pap=nh.param<double>("tilt_attitude_p_P_gain",3.5);
+			tilt_Iap=nh.param<double>("tilt_attitude_p_I_gain",0.4);
+			tilt_Dap=nh.param<double>("tilt_attitude_p_D_gain",0.5);
 
 			//Yaw PID gains
 			tilt_Py=nh.param<double>("tilt_attitude_y_P_gain",5.0);
@@ -785,14 +803,21 @@ void setCM(){
 }
 
 void setSA(){
-	SA << (r2/(F1*4)),  (r2/(F1*4)), (1/(r_arm*F1*4)),
+	SA << F1/r2,     F2/r2,     -F3/r2,     -F4/r2,
+	      F1/r2,    -F2/r2,     -F3/r2,      F4/r2,
+	      r_arm*F1,  r_arm*F2,   r_arm*F3,   r_arm*F4,
+	      r_arm*F1, -r_arm*F2,   r_arm*F3,  -r_arm*F4;
+
+	/*SA << (r2/(F1*4)),  (r2/(F1*4)), (1/(r_arm*F1*4)),
 		(r2/(F2*4)),  (-r2/(F2*4)), (1/(r_arm*F2*4)),
 		(-r2/(F3*4)),  (-r2/(F3*4)), (1/(r_arm*F3*4)),
-		(-r2/(F4*4)),  (r2/(F4*4)), (1/(r_arm*F4*4));		// 2023.08.03 update
+		(-r2/(F4*4)),  (r2/(F4*4)), (1/(r_arm*F4*4));*/		// 2023.08.03 update
 	//	  (y_c_hat-x_c_hat+r2*r_arm)*F1/r2, (x_c_hat+y_c_hat+r2*r_arm)*F2/r2, (x_c_hat-y_c_hat+r2*r_arm)*F3/r2, (-x_c_hat-y_c_hat+r2*r_arm)*F4/r2;
 
 //	std::cout << "SA : \n" << SA <<std::endl;
 	// pinvSA = SA.completeOrthogonalDecomposition().pseudoInverse();
+
+	invSA = SA.inverse();
 }
 void rpyT_ctrl() {
 	pid_Gain_Setting();
@@ -994,15 +1019,15 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	//	(r_arm*(sin(theta1)*F1 + sin(theta2)*F2 + sin(theta3)*F3 + sin(theta4)*F4)); //2023.08.03 update
 
 	//double tau_y_cos=-F1*xi*cos(theta1)+F2*xi*cos(theta2)-F3*xi*cos(theta3)+F4*xi*cos(theta4);
-	control_by_theta << F_xd, F_yd, tau_y_th;
+	control_by_theta << F_xd, F_yd, tau_y_th, 0;
 	//std::cout << "tau_y_cos : " << tau_y_cos << std::endl;	
 	//std::cout << "pinvSA : \n" << pinvSA <<std::endl;
 	setSA();
-	sine_theta_command=SA*control_by_theta;
+	sine_theta_command = invSA*control_by_theta; //2023.08.05 update
 	//ROS_INFO("%lf %lf %lf %lf",sine_theta_command(0),sine_theta_command(1),sine_theta_command(2),sine_theta_command(3));
 	if(!tilt_mode){
 		theta1_command = 0.0;
-        theta2_command = 0.0;
+        	theta2_command = 0.0;
 		theta3_command = 0.0;
 		theta4_command = 0.0;
 	}
@@ -1355,9 +1380,15 @@ void pid_Gain_Setting(){
 		Dp = conv_Dp;
 	}
 	else{
-		Pa = tilt_Pa;
-		Ia = tilt_Ia;
-		Da = tilt_Da;
+		Par = tilt_Par;
+		Iar = tilt_Iar;
+		Dar = tilt_Dar;
+
+
+		Pap = tilt_Pap;
+		Iap = tilt_Iap;
+		Dap = tilt_Dap;
+
 
 		Py = tilt_Py;
 		Dy = tilt_Dy;
