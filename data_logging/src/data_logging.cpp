@@ -162,8 +162,8 @@ void publisherSet()
 	data_log.data[42]=SBUS[4];
 	data_log.data[43]=SBUS[5];
 	data_log.data[44]=SBUS[6];
-	data_log.data[45]=SBUS[8];
-	data_log.data[46]=SBUS[9];
+	data_log.data[45]=SBUS[7];
+	data_log.data[46]=SBUS[8];
 	data_log.data[47]=delta_t;
 	data_log.data[48]=battery_voltage;
 	data_log.data[49]=linear_velocity.x;
@@ -211,12 +211,16 @@ void desired_attitude_callback(const geometry_msgs::Vector3& msg){
 
 void servo_angle_callback(const sensor_msgs::JointState& msg){
 	theta1=msg.position[0];
-	theta2=-msg.position[1];
+	theta2=msg.position[1];
+	theta3=msg.position[2];
+	theta4=msg.position[3];
 }
 
 void desired_servo_angle_callback(const sensor_msgs::JointState& msg){
 	desired_theta1=msg.position[0];
-	desired_theta2=-msg.position[1];
+	desired_theta2=msg.position[1];
+	desired_theta3=msg.position[2];
+	desired_theta4=msg.position[3];
 }
 
 void pwm_cmd_callback(const std_msgs::Int16MultiArray::ConstPtr& msg){
@@ -241,6 +245,7 @@ void linear_velocity_callback(const geometry_msgs::Vector3& msg){
 void desired_linear_velocity_callback(const geometry_msgs::Vector3& msg){
 	desired_linear_velocity.x=msg.x;
 	desired_linear_velocity.y=msg.y;
+	desired_linear_velocity.z=msg.z;
 }
 
 void battery_voltage_callback(const std_msgs::Float32& msg){
