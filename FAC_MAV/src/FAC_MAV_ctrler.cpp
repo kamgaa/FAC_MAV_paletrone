@@ -1,4 +1,11 @@
 //############################################################### CODE UPDATE HISTORY ###########################################################
+//
+//		         ███╗   ███╗    ██████╗     ██╗     
+//        		 ████╗ ████║    ██╔══██╗    ██║     
+//        		 ██╔████╔██║    ██████╔╝    ██║     
+//        		 ██║╚██╔╝██║    ██╔══██╗    ██║     
+//        		 ██║ ╚═╝ ██║    ██║  ██║    ███████  
+//
 //2022.05.16 Coaxial-Octorotor version
 //2022.06.23 Ground Station Application
 //2022.08.XX DOB (Disturbance Observer) Application
@@ -904,8 +911,8 @@ void rpyT_ctrl() {
 			F_xd = mass*(X_ddot_d*cos(imu_rpy.z)*cos(imu_rpy.y)+Y_ddot_d*sin(imu_rpy.z)*cos(imu_rpy.y)-(Z_ddot_d)*sin(imu_rpy.y));
 			F_yd = mass*(-X_ddot_d*(cos(imu_rpy.x)*sin(imu_rpy.z)-cos(imu_rpy.z)*sin(imu_rpy.x)*sin(imu_rpy.y))+Y_ddot_d*(cos(imu_rpy.x)*cos(imu_rpy.z)+sin(imu_rpy.x)*sin(imu_rpy.y)*sin(imu_rpy.z))+(Z_ddot_d)*cos(imu_rpy.y)*sin(imu_rpy.x));
 
-		if(fabs(F_xd) > F_xd_limit) F_xd = (F_xd/fabs(F_xd))*F_xd_limit;
-		if(fabs(F_yd) > F_yd_limit) F_yd = (F_yd/fabs(F_yd))*F_yd_limit;
+		//if(fabs(F_xd) > F_xd_limit) F_xd = (F_xd/fabs(F_xd))*F_xd_limit;
+		//if(fabs(F_yd) > F_yd_limit) F_yd = (F_yd/fabs(F_yd))*F_yd_limit;
 			//if(position_mode) ROS_INFO("Position & Tilt !!!");
 			//else ROS_INFO("Velocity & Tilt !!!");
 		}
@@ -1014,7 +1021,7 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	F3 = F_cmd(2);
 	F4 = F_cmd(3);
 
-	double tau_y_th=tau_y_d_non_sat-tau_y_limit;
+	double tau_y_th = 0;	//tau_y_d_non_sat-tau_y_limit;
 
 	//	(r_arm*(sin(theta1)*F1 + sin(theta2)*F2 + sin(theta3)*F3 + sin(theta4)*F4)); //2023.08.03 update
 
