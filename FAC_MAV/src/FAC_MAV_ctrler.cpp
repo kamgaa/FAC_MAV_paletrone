@@ -1,13 +1,4 @@
-//#############################CODE UPDATE HISTORY ##################################
-
-/*
-			███╗   ███╗    ██████╗     ██╗     
-			████╗ ████║    ██╔══██╗    ██║     
-			██╔████╔██║    ██████╔╝    ██║     
-			██║╚██╔╝██║    ██╔══██╗    ██║     
-			██║ ╚═╝ ██║    ██║  ██║    ███████                                                                           
-*/
-
+//############################################################### CODE UPDATE HISTORY ###########################################################
 //2022.05.16 Coaxial-Octorotor version
 //2022.06.23 Ground Station Application
 //2022.08.XX DOB (Disturbance Observer) Application
@@ -15,7 +6,7 @@
 //2022.09.21 Controller mode selection Application
 //2023.08.05 Devide tilt mode rp_rains to r_gains, p_gains(Par,Dar,Iar // Pay,Day,Iay)
 //2023.08.05 SA change (4,3) -> (4,4)
-//####################################################################################
+//###############################################################################################################################################
 
 #include <ros/ros.h>
 #include <iostream>
@@ -213,9 +204,16 @@ double Fe_cutoff_freq = 1.0;
 
 static double r_arm = 0.3025;// m // diagonal length between thruster x2
 static double l_servo = 0.035;
-static double mass = 5.6;//2.9;//3.8; 2.365;//(Kg)
+static double mass = 8.2;//2.9;//3.8; 2.365;//(Kg)
 static double r2=sqrt(2);
 
+
+//Body desired force limit
+double F_xd_limit = mass*1.0;
+double F_yd_limit = mass*1.0; 
+
+
+//Body desired force limit
 
 //Propeller constants(DJI E800(3510 motors + 620S ESCs))
 static double xi = 0.01;//F_i=k*(omega_i)^2, M_i=b*(omega_i)^2
@@ -235,9 +233,9 @@ static double XY_limit = 1.0;
 static double XYZ_dot_limit=1;
 static double XYZ_ddot_limit=2;
 static double alpha_beta_limit=1;
-static double hardware_servo_limit=0.15;
-static double servo_command_limit = 0.15;
-static double tau_y_limit = 1.5; // 1.0
+static double hardware_servo_limit=0.3;
+static double servo_command_limit = 0.3;
+static double tau_y_limit = 3.0; // 1.0 -> 1.5 ->3.0
 
 double x_c_hat=0.0;
 double y_c_hat=0.0;
@@ -614,9 +612,9 @@ int main(int argc, char **argv){
 			tilt_Par=nh.param<double>("tilt_attitude_r_P_gain",3.5);
 			tilt_Iar=nh.param<double>("tilt_attitude_r_I_gain",3.5);
 			tilt_Dar=nh.param<double>("tilt_attitude_r_D_gain",3.5);
-			tilt_Pap=nh.param<double>("tilt_attitude_p_P_gain",3.5);
-			tilt_Iap=nh.param<double>("tilt_attitude_p_I_gain",0.4);
-			tilt_Dap=nh.param<double>("tilt_attitude_p_D_gain",0.5);
+		
+			//tilt_Iap=nh.param<double>("tilt_attitude_p_I_gain",0.4);
+			//tilt_Dap=nh.param<double>("tilt_attitude_p_D_gain",0.5);
 
 			//Yaw PID gains
 			tilt_Py=nh.param<double>("tilt_attitude_y_P_gain",5.0);
@@ -796,17 +794,17 @@ void setCM(){
 	//Co-rotating type //2023_07_27 update
 	CM << (y_c_hat+r_arm/r2)*cos(theta1)+(-(l_servo-z_c_hat)+xi)*sin(theta1)/r2,  (y_c_hat+r_arm/r2)*cos(theta2)+((l_servo-z_c_hat)-xi)*sin(theta2)/r2,   (y_c_hat-r_arm/r2)*cos(theta3)+((l_servo-z_c_hat)-xi)*sin(theta3)/r2,  (y_c_hat-r_arm/r2)*cos(theta4)+(-(l_servo-z_c_hat)+xi)*sin(theta4)/r2,
 	      -(x_c_hat-r_arm/r2)*cos(theta1)+((l_servo-z_c_hat)+xi)*sin(theta1)/r2, -(x_c_hat+r_arm/r2)*cos(theta2)+((l_servo-z_c_hat)+xi)*sin(theta2)/r2, -(x_c_hat+r_arm/r2)*cos(theta3)+(-(l_servo-z_c_hat)-xi)*sin(theta3)/r2, -(x_c_hat-r_arm/r2)*cos(theta4)+(-(l_servo-z_c_hat)-xi)*sin(theta4)/r2,
-	      -xi*cos(theta1)+(r_arm-(x_c_hat-y_c_hat)/r2)*sin(theta1) 			   ,   xi*cos(theta2)+(r_arm+(x_c_hat+y_c_hat)/r2)*sin(theta2)			  ,   -xi*cos(theta3)+(r_arm+(x_c_hat-y_c_hat)/r2)*sin(theta3)			  ,   xi*cos(theta4)+(r_arm-(x_c_hat+y_c_hat)/r2)*sin(theta4),
+	      -xi*cos(theta1)+(-(x_c_hat-y_c_hat)/r2)*sin(theta1) 			   ,   xi*cos(theta2)+((x_c_hat+y_c_hat)/r2)*sin(theta2)			  ,   -xi*cos(theta3)+((x_c_hat-y_c_hat)/r2)*sin(theta3)			  ,   xi*cos(theta4)-((x_c_hat+y_c_hat)/r2)*sin(theta4),
 																   -cos(theta1),                                                          -cos(theta2),                                                           -cos(theta3),                                                           -cos(theta4);
     invCM = CM.inverse();
 //	      -xi*cos(theta1)+(y_c_hat-x_c_hat+r2*r_arm)*sin(theta1)/r2,  xi*cos(theta2)+(x_c_hat+y_c_hat+r2*r_arm)*sin(theta2)/r2,  -xi*cos(theta3)+(x_c_hat-y_c_hat+r2*r_arm)*sin(theta3)/r2,  xi*cos(theta4)+(-x_c_hat-y_c_hat+r2*r_arm)*sin(theta4)/r2,
 }
 
 void setSA(){
-	SA << F1/r2,     F2/r2,     -F3/r2,     -F4/r2,
-	      F1/r2,    -F2/r2,     -F3/r2,      F4/r2,
+	SA <<  F1/r2,     F2/r2,     -(F3/r2),     -(F4/r2),
+	       F1/r2,    -(F2/r2),   -(F3/r2),       F4/r2,
 	      r_arm*F1,  r_arm*F2,   r_arm*F3,   r_arm*F4,
-	      r_arm*F1, -r_arm*F2,   r_arm*F3,  -r_arm*F4;
+	      r_arm*F1, -(r_arm*F2),   r_arm*F3,  -(r_arm*F4);
 
 	/*SA << (r2/(F1*4)),  (r2/(F1*4)), (1/(r_arm*F1*4)),
 		(r2/(F2*4)),  (-r2/(F2*4)), (1/(r_arm*F2*4)),
@@ -906,6 +904,8 @@ void rpyT_ctrl() {
 			F_xd = mass*(X_ddot_d*cos(imu_rpy.z)*cos(imu_rpy.y)+Y_ddot_d*sin(imu_rpy.z)*cos(imu_rpy.y)-(Z_ddot_d)*sin(imu_rpy.y));
 			F_yd = mass*(-X_ddot_d*(cos(imu_rpy.x)*sin(imu_rpy.z)-cos(imu_rpy.z)*sin(imu_rpy.x)*sin(imu_rpy.y))+Y_ddot_d*(cos(imu_rpy.x)*cos(imu_rpy.z)+sin(imu_rpy.x)*sin(imu_rpy.y)*sin(imu_rpy.z))+(Z_ddot_d)*cos(imu_rpy.y)*sin(imu_rpy.x));
 
+		if(fabs(F_xd) > F_xd_limit) F_xd = (F_xd/fabs(F_xd))*F_xd_limit;
+		if(fabs(F_yd) > F_yd_limit) F_yd = (F_yd/fabs(F_yd))*F_yd_limit;
 			//if(position_mode) ROS_INFO("Position & Tilt !!!");
 			//else ROS_INFO("Velocity & Tilt !!!");
 		}
@@ -955,8 +955,8 @@ void rpyT_ctrl() {
 	e_Z_i += e_Z * delta_t.count();	
 	if (fabs(e_Z_i) > z_integ_limit) e_Z_i = (e_Z_i / fabs(e_Z_i)) * z_integ_limit;
 
-	tau_r_d = Pa * e_r + Ia * e_r_i + Da * (-imu_ang_vel.x);//- (double)0.48;
-	tau_p_d = Pa * e_p + Ia * e_p_i + Da * (-imu_ang_vel.y);//+ (double)0.18; 
+	tau_r_d = Par * e_r + Iar * e_r_i + Dar * (-imu_ang_vel.x);//- (double)0.48; //Pa -> Par
+	tau_p_d = Par * e_p + Iar * e_p_i + Dar * (-imu_ang_vel.y);//+ (double)0.18; //Pa -> Par 
 	tau_y_d = Py * e_y + Dy * (-imu_ang_vel.z);
 	tau_y_d_non_sat=tau_y_d;
 	if(fabs(tau_y_d) > tau_y_limit) tau_y_d = tau_y_d/fabs(tau_y_d)*tau_y_limit;
@@ -1014,7 +1014,7 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	F3 = F_cmd(2);
 	F4 = F_cmd(3);
 
-	double tau_y_th=tau_y_d_non_sat-tau_y_d;
+	double tau_y_th=tau_y_d_non_sat-tau_y_limit;
 
 	//	(r_arm*(sin(theta1)*F1 + sin(theta2)*F2 + sin(theta3)*F3 + sin(theta4)*F4)); //2023.08.03 update
 
@@ -1092,7 +1092,7 @@ void jointstateCallback(const sensor_msgs::JointState& msg){
 	theta3=msg.position[2];
 	theta4=msg.position[3];
 	
-    	//ROS_INFO("theta1:%lf   theta2:%lf",theta1, theta2);
+    	//ROS_INFO("theta1:%lf   theta2:%lf  theta3:%lf  theta4:%lf" ,theta1, theta2, theta3, theta4);
 }
 
 ros::Time imuTimer;
@@ -1360,9 +1360,9 @@ void pwm_Calibration(){
 
 void pid_Gain_Setting(){
 	if(Sbus[7]<=1500){
-		Pa = conv_Pa;
-		Ia = conv_Ia;
-		Da = conv_Da;
+		Par = conv_Pa;
+		Iar = conv_Ia;
+		Dar = conv_Da;
 
 		Py = conv_Py;
 		Dy = conv_Dy;
@@ -1385,9 +1385,9 @@ void pid_Gain_Setting(){
 		Dar = tilt_Dar;
 
 
-		Pap = tilt_Pap;
-		Iap = tilt_Iap;
-		Dap = tilt_Dap;
+		//Pap = tilt_Pap;
+		//Iap = tilt_Iap;
+		//Dap = tilt_Dap;
 
 
 		Py = tilt_Py;
