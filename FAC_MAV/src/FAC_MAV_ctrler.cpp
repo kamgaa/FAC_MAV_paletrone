@@ -216,8 +216,8 @@ static double r2=sqrt(2);
 
 
 //Body desired force limit
-double F_xd_limit = mass*1.0;
-double F_yd_limit = mass*1.0; 
+double F_xd_limit = mass*2.0;
+double F_yd_limit = mass*2.0; 
 
 
 //Body desired force limit
@@ -242,7 +242,9 @@ static double XYZ_ddot_limit=2;
 static double alpha_beta_limit=1;
 static double hardware_servo_limit=0.3;
 static double servo_command_limit = 0.3;
-static double tau_y_limit = 3.0; // 1.0 -> 1.5 ->3.0
+static double tau_y_limit = 0.75; // 1.0 -> 1.5 ->3.0 ->1.5 ->1.0 -> 0.5 -> 0.75
+static double tau_y_th_limit = 0.5; //2023.08.17 update
+double tau_y_th = 0.0; //2023.08.17 update
 
 double x_c_hat=0.0;
 double y_c_hat=0.0;
@@ -441,6 +443,7 @@ ros::Publisher linear_acceleration;
 ros::Publisher External_force_data;
 ros::Publisher reference_desired_pos_error;
 ros::Publisher reference_pos;
+//ros::Publisher tau_yaw_thrust;
 //----------------------------------------------------
 
 //Control Matrix---------------------------------------
@@ -683,6 +686,7 @@ int main(int argc, char **argv){
 	External_force_data = nh.advertise<geometry_msgs::Vector3>("external_force",100);
 	reference_desired_pos_error = nh.advertise<geometry_msgs::Vector3>("pos_e",100);
 	reference_pos = nh.advertise<geometry_msgs::Vector3>("pos_r",100);
+	//tau_yaw_thrust = nh.advertise<geometry_msgs::Vector3>("pos_r",100);
 
     	ros::Subscriber dynamixel_state = nh.subscribe("joint_states",100,jointstateCallback,ros::TransportHints().tcpNoDelay());
    	ros::Subscriber att = nh.subscribe("/imu/data",1,imu_Callback,ros::TransportHints().tcpNoDelay());
@@ -873,8 +877,8 @@ void rpyT_ctrl() {
 			X_d = X_d_base - XY_limit*(((double)Sbus[1]-(double)1500)/(double)500);
 			Y_d = Y_d_base + XY_limit*(((double)Sbus[3]-(double)1500)/(double)500);
 		
-			e_X = X_r-pos.x;//X_d - pos.x;
-			e_Y = Y_r-pos.y;//Y_d - pos.y;
+			e_X = X_d - pos.x;// X_r-pos.x;
+			e_Y = Y_d - pos.y;// Y_r-pos.y; #2023.08.17 update
 			e_X_i += e_X * delta_t.count();
 			if (fabs(e_X_i) > pos_integ_limit) e_X_i = (e_X_i / fabs(e_X_i)) * pos_integ_limit;
 			e_Y_i += e_Y * delta_t.count();
@@ -911,8 +915,8 @@ void rpyT_ctrl() {
 			F_xd = mass*(X_ddot_d*cos(imu_rpy.z)*cos(imu_rpy.y)+Y_ddot_d*sin(imu_rpy.z)*cos(imu_rpy.y)-(Z_ddot_d)*sin(imu_rpy.y));
 			F_yd = mass*(-X_ddot_d*(cos(imu_rpy.x)*sin(imu_rpy.z)-cos(imu_rpy.z)*sin(imu_rpy.x)*sin(imu_rpy.y))+Y_ddot_d*(cos(imu_rpy.x)*cos(imu_rpy.z)+sin(imu_rpy.x)*sin(imu_rpy.y)*sin(imu_rpy.z))+(Z_ddot_d)*cos(imu_rpy.y)*sin(imu_rpy.x));
 
-		//if(fabs(F_xd) > F_xd_limit) F_xd = (F_xd/fabs(F_xd))*F_xd_limit;
-		//if(fabs(F_yd) > F_yd_limit) F_yd = (F_yd/fabs(F_yd))*F_yd_limit;
+		if(fabs(F_xd) > F_xd_limit) F_xd = (F_xd/fabs(F_xd))*F_xd_limit;
+		if(fabs(F_yd) > F_yd_limit) F_yd = (F_yd/fabs(F_yd))*F_yd_limit;
 			//if(position_mode) ROS_INFO("Position & Tilt !!!");
 			//else ROS_INFO("Velocity & Tilt !!!");
 		}
@@ -1021,8 +1025,15 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	F3 = F_cmd(2);
 	F4 = F_cmd(3);
 
-	double tau_y_th = 0;	//tau_y_d_non_sat-tau_y_limit;
+	//tau_yaw_sine_desired part---//
+	if((tau_y_d-tau_y_limit)==0)
+	{
+	tau_y_th = tau_y_d_non_sat-tau_y_d;
+	if(fabs(tau_y_th) > tau_y_th_limit) tau_y_th = (tau_y_th/fabs(tau_y_th))*tau_y_th_limit;//2023.08.17 update
+	}
 
+//	ROS_INFO("%lf ",tau_y_th);
+	//----------------------------//
 	//	(r_arm*(sin(theta1)*F1 + sin(theta2)*F2 + sin(theta3)*F3 + sin(theta4)*F4)); //2023.08.03 update
 
 	//double tau_y_cos=-F1*xi*cos(theta1)+F2*xi*cos(theta2)-F3*xi*cos(theta3)+F4*xi*cos(theta4);
@@ -1054,7 +1065,7 @@ void ud_to_PWMs(double tau_r_des, double tau_p_des, double tau_y_des, double Thr
 	
 	//pwm_Kill();
 	pwm_Command(Force_to_PWM(F1),Force_to_PWM(F2), Force_to_PWM(F3), Force_to_PWM(F4));
-	// ROS_INFO("1:%d, 2:%d, 3:%d, 4:%d",PWMs_cmd.data[0], PWMs_cmd.data[1], PWMs_cmd.data[2], PWMs_cmd.data[3]);
+	//ROS_INFO("1:%d, 2:%d, 3:%d, 4:%d",PWMs_cmd.data[0], PWMs_cmd.data[1], PWMs_cmd.data[2], PWMs_cmd.data[3]);
 	// Force_to_PWM(-T_d/4.0);
 	// ROS_INFO("%f 1:%d, 2:%d, 3:%d, 4:%d",z_d,PWMs_cmd.data[0], PWMs_cmd.data[1], PWMs_cmd.data[2], PWMs_cmd.data[3]);
 }
